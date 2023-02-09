@@ -9,38 +9,39 @@
 #include <process.h>
 #include <time.h>
 
-// Êîäû êëàâèø 
+// Коды клавиш 
 #define KEY_Q 0x51
 #define KEY_C 0x43
 #define KEY_1 0x30
 #define KEY_2 0x31
 #define KEY_3 0x32
 
+
 using namespace std;
 
 const TCHAR szWinClass[] = _T("My Beautiful App");
 const TCHAR szWinName[] = _T("My Beautiful Window");
-HWND hwnd;               // äåñêðèïòîð îêíà
-HBRUSH hBrush;           // êèñòü
+HWND hwnd;               // дескриптор окна
+HBRUSH hBrush;           // кисть
 HDC hdc;
 PAINTSTRUCT ps;
 RECT clientRect;
 UINT WM_GridChange;
 UINT WM_GameOver;
-HANDLE player_sem;       // ñåìàôîð äëÿ ïîñ÷¸òà êîëè÷åñòâà èãðîêîâ
-HANDLE sl_X;             // ñîáûòèå äëÿ áëîêèðîâêè õîäîâ êðåñòèêà
-HANDLE sl_O;             // ñîáûòèå äëÿ áëîêèðîâêè õîäîâ íîëèêà
-HANDLE animate_thread;   // äåñêðèïòîð ïîòîêà àíèìàöèè ôîíà
-bool animate = true;     // ðàáîòàåò ëè ïîòîê àíèìàöèè ôîíà
-char player;             // ñèìâîë èãðîêà äëÿ äàííîãî ïîòîêà ('o' èëè 'x')
+HANDLE player_sem;       // семафор для посчёта количества игроков
+HANDLE sl_X;             // событие для блокировки ходов крестика
+HANDLE sl_O;             // событие для блокировки ходов нолика
+HANDLE animate_thread;   // дескриптор потока анимации фона
+bool animate = true;     // работает ли поток анимации фона
+char player;             // символ игрока для данного потока ('o' или 'x')
 
-int N; // ×èñëî ÿ÷ååê
+int N; // Число ячеек
 
-// Mapping äëÿ ìåæïðîöåññíîãî âçàèìîäåéñòâèÿ
+// Mapping для межпроцессного взаимодействия
 HANDLE IPCMapping = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 255, _T("GlobalMapping"));
 char* game_field = (char*)MapViewOfFile(IPCMapping, FILE_MAP_ALL_ACCESS, 0, 0, 255);
 
-// Ïàðàìåòðû îêíà (ðàçìåð, ïîëîæåíèå, öâåò)
+// Параметры окна (размер, положение, цвет)
 struct {
 	int width = 320;
 	int height = 240;
@@ -50,14 +51,14 @@ struct {
 } wnd_info;
 
 
-/* Ñëó÷àéíîå öåëîå ÷èñëî ìåäó min_n è max_n (âêëþ÷èòåëüíî) */
+// Случайное целое число меду min_n и max_n (включительно)
 int GetRandomInt(int min_n, int max_n)
 {
 	return rand() % (max_n + 1) + min_n;
 }
 
 
-// Ïî÷èñòèòü ïàìÿòü
+// Почистить память
 void CleanUp()
 {
 	DestroyWindow(hwnd);
@@ -67,7 +68,7 @@ void CleanUp()
 }
 
 
-// Ïîòîê àíèìàöèè ôîíà
+// Поток анимации фона
 DWORD WINAPI AnimateBG(void*)
 {
 	while (1)
@@ -87,28 +88,28 @@ DWORD WINAPI AnimateBG(void*)
 }
 
 
-// Ïðîâåðêà íà [w - ïîáåäà] [n - íè÷åãî] [d - íè÷üÿ]
+// Проверка на [w - победа] [n - ничего] [d - ничья]
 char CheckForWin(char c)
 {
 	int i, j;
 
-	for (i = 0; i < N; i++) { // ñòðîêè
+	for (i = 0; i < N; i++) { // строки
 		for (j = 0; j < N; j++)
 			if (game_field[i * N + j] != c) break;
 		if (j == N) return 'w';
 	}
 
-	for (i = 0; i < N; i++) { // ñòîëáöû
+	for (i = 0; i < N; i++) { // столбцы
 		for (j = 0; j < N; j++)
 			if (game_field[j * N + i] != c) break;
 		if (j == N) return 'w';
 	}
 
-	for (i = 0; i < N; i++)  // ãëàâíàÿ äèàãîíàëü
+	for (i = 0; i < N; i++)  //главная диагональ
 		if (game_field[i * N + i] != c) break;
 	if (i == N) return 'w';
 
-	for (i = 0; i < N; i++) // ïîáî÷íàÿ äèàãîíàëü
+	for (i = 0; i < N; i++) // побочная диагональ
 		if (game_field[(i + 1) * (N - 1)] != c) break;
 	if (i == N) return 'w';
 
@@ -120,7 +121,7 @@ char CheckForWin(char c)
 }
 
 
-/* Ïðî÷èòàòü èíôîðìàöèþ èç êîíôèãóðàöèîííîãî ôàéëà*/
+// Прочитать информацию из конфигурационного файла
 void ReadConfig()
 {
 	ifstream cfile;
@@ -289,7 +290,7 @@ void LoadWndData_winapi()
 }
 
 
-// Çàïóñòèòü áëîêíîò
+// Запустить блокнот
 void RunNotepad(void)
 {
 	STARTUPINFO sInfo;
@@ -307,14 +308,14 @@ void RunNotepad(void)
 }
 
 
-// Îáðàáîòêà ñîîáùåíèé îêíà
+// Обработка сообщений окна
 LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-	if (message == WM_GridChange) { // èçìåíåíèå èãðîâîãî ïîëÿ
+	if (message == WM_GridChange) { // изменение игрового поля
 		InvalidateRect(hwnd, NULL, TRUE);
 		return 0;
 	}
-	if (message == WM_GameOver) { // êîíåö èãðû
+	if (message == WM_GameOver) { // конец игры
 		DestroyWindow(hwnd);
 		return 0;
 	}
@@ -385,12 +386,12 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 		SelectObject(hdc, grid_pen);
 		SelectObject(hdc, mybrush);
 
-		for (int i = 1; i < N; i++) { // Ãîðèçîíòàëüíûå ïîëîñû
+		for (int i = 1; i < N; i++) { // // Горизонтальные полосы
 			int y = i * (win_height / N);
 			MoveToEx(hdc, 0, y, &pt);
 			LineTo(hdc, win_width, y);
 		}
-		for (int i = 1; i < N; i++) { // Âåðòèêàëüíûå ïîëîñû
+		for (int i = 1; i < N; i++) { // Вертикальные полосы
 			int x = i * (win_width / N);
 			MoveToEx(hdc, x, 0, &pt);
 			LineTo(hdc, x, win_height);
@@ -400,10 +401,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 		SelectObject(hdc, x_pen);
 		for (int i = 0; i < N; i++)
 			for (int j = 0; j < N; j++) {
-				if (game_field[i * N + j] == 'o') // Ðèñóåì íîëèê
+				if (game_field[i * N + j] == 'o') // Рисуем нолик
 					Ellipse(hdc, grid_size_x * j, grid_size_y * i, grid_size_x * (j + 1), grid_size_y * (i + 1));
 
-				else if (game_field[i * N + j] == 'x') { // Ðèñóåì êðåñòèê
+				else if (game_field[i * N + j] == 'x') { // Рисуем крестик
 					MoveToEx(hdc, grid_size_x * j, grid_size_y * i, &pt);
 					LineTo(hdc, grid_size_x * (j + 1), grid_size_y * (i + 1));
 					MoveToEx(hdc, grid_size_x * (j + 1), grid_size_y * i, &pt);
@@ -420,10 +421,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
 	case WM_LBUTTONUP:
 	{
-		if (player == 'x') { // íå äà¸ì ñõîäèòü õ åñëè õîäèò î
+		if (player == 'x') { // не даём сходить х если ходит о
 			if (WaitForSingleObject(sl_X, 10) != WAIT_TIMEOUT) return 0;
 		}
-		else { // íå äà¸ì ñõîäèòü î åñëè õîäèò õ
+		else { // не даём сходить о если ходит х
 			if (WaitForSingleObject(sl_O, 10) != WAIT_TIMEOUT) return 0;
 		}
 
@@ -431,22 +432,22 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 		int x = LOWORD(lParam) / (clientRect.right / N);
 		int y = HIWORD(lParam) / (clientRect.bottom / N);
 
-		if (game_field[y * N + x] == ' ') { // äà¸ì ñõîäèòü òîëüêî â ïóñòóþ êëåòêó
+		if (game_field[y * N + x] == ' ') { // даём сходить только в пустую клетку
 			game_field[y * N + x] = player;
 			PostMessage(HWND_BROADCAST, WM_GridChange, NULL, NULL);
 		}
 		else {
-			MessageBox(hwnd, _T("Ñþäà õîäèòü íåëüçÿ"), _T("ÎÈØÁÊÀ!!!"), MB_OK | MB_ICONERROR);
+			MessageBox(hwnd, _T("Сюда ходить нельзя"), _T("ОШИБКА!!!"), MB_OK | MB_ICONERROR);
 			return 0;
 		}
 
 		char result = CheckForWin(player);
-		if (result == 'w') { // ïîáåäà
-			MessageBox(hwnd, _T("Óðà, ïîáåäà!"), _T("Èãðà îêîí÷åíà"), MB_OK | MB_ICONINFORMATION);
+		if (result == 'w') { // победа
+			MessageBox(hwnd, _T("Ура, победа!"), _T("Игра окончена"), MB_OK | MB_ICONINFORMATION);
 			PostMessage(HWND_BROADCAST, WM_GameOver, NULL, NULL);
 		}
-		else if (result == 'd') { // íè÷üÿ 
-			MessageBox(hwnd, _T("Íè÷üÿ"), _T("Èãðà îêîí÷åíà"), MB_OK | MB_ICONINFORMATION);
+		else if (result == 'd') { // ничья 
+			MessageBox(hwnd, _T("Ничья"), _T("Игра окончена"), MB_OK | MB_ICONINFORMATION);
 			PostMessage(HWND_BROADCAST, WM_GameOver, NULL, NULL);
 		}
 
@@ -493,19 +494,19 @@ int main(int argc, char** argv)
 	int nCmdShow = SW_SHOW;
 	HINSTANCE hThisInstance = GetModuleHandle(NULL);
 
-	// Ñòðóêòóðà îêíà
+	// Структура окна
 	wincl.hInstance = hThisInstance;
 	wincl.lpszClassName = szWinClass;
 	wincl.lpfnWndProc = WindowProcedure;
 
-	// Êèñòü äëÿ ðàñêðàñêè ôîíà
+	// Кисть для раскраски фона
 	hBrush = CreateSolidBrush(RGB(wnd_info.color[0], wnd_info.color[1], wnd_info.color[2]));
 	wincl.hbrBackground = hBrush;
 
 	if (!RegisterClass(&wincl))
 		return 0;
 
-	// Ñîçäàòü îêíî
+	// Создать окно
 	hwnd = CreateWindow(
 		szWinClass,            /* Classname */
 		szWinName,             /* Title Text */
@@ -520,26 +521,26 @@ int main(int argc, char** argv)
 		NULL                   /* No Window Creation data */
 	);
 
-	// îïðåäåëåíèå î÷åð¸äíîñòè õîäîâ, ðàñïðåäåëåíèå "ðîëåé"
+	// определение очерёдности ходов, распределение "ролей"
 	sl_O = CreateEvent(NULL, TRUE, FALSE, _T("GlobalO"));
 	sl_X = CreateEvent(NULL, TRUE, FALSE, _T("GlobalX"));
 	player_sem = CreateSemaphore(NULL, 2, 2, _T("GlobalPlayerSem"));
 	if (GetLastError() != ERROR_ALREADY_EXISTS)
 	{
-		player = 'x'; // åñëè ýòî ïåðâûé çàïóñê, çíà÷èò êðåñòèê
+		player = 'x'; // если это первый запуск, значит крестик
 		SetWindowText(hwnd, _T("TicTacToe | Player:X"));
-		for (int i = 0; i < N * N; i++) game_field[i] = ' '; // çàîäíî îáíóëèì ïîëå, çàïîëíèâ åãî ïóñòûìè êëåòêàìè
+		for (int i = 0; i < N * N; i++) game_field[i] = ' '; // заодно обнулим поле, заполнив его пустыми клетками
 		SetEvent(sl_O);
 	}
 	else
 	{
-		player = 'o'; // åñëè âòîðîé, òî êðåñòèê
+		player = 'o'; // если второй, то крестик
 		SetWindowText(hwnd, _T("TicTacToe | Player:O"));
 	}
 
-	if (WaitForSingleObject(player_sem, 100) == WAIT_TIMEOUT) // åñëè ïîïûòàòüñÿ îòêðûòü òðåòüå îêíî
+	if (WaitForSingleObject(player_sem, 100) == WAIT_TIMEOUT) // если попытаться открыть третье окно
 	{
-		MessageBox(hwnd, _T("Âîæìîæíî îäíîâðåìåííîå îòêðûòèå íå áîëåå äâóõ îêîí"), _T("ÎÈØÁÊÀ!!!"), MB_OK | MB_ICONERROR);
+		MessageBox(hwnd, _T("Вожможно одновременное открытие не более двух окон"), _T("ОШИБКА!!!"), MB_OK | MB_ICONERROR);
 		UnregisterClass(szWinClass, hThisInstance);
 		CleanUp();
 		return 0;
@@ -549,15 +550,15 @@ int main(int argc, char** argv)
 	ShowWindow(hwnd, nCmdShow);
 	animate_thread = CreateThread(NULL, 0, AnimateBG, NULL, THREAD_SUSPEND_RESUME, NULL);
 
-	// Êîìáèíàöèè êëàâèø
+	// Комбинации клавиш
 	RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_NOREPEAT, KEY_Q); // ctrl+Q
 	RegisterHotKey(hwnd, 2, MOD_SHIFT | MOD_NOREPEAT, KEY_C); // shift+C
 
-	WM_GridChange = RegisterWindowMessage(_T("GridChange")); // ñîîáùåíèå îá èçìåíåíèè èãðîâîãî ïîëÿ
-	WM_GameOver = RegisterWindowMessage(_T("GameOver")); // ñîîáùåíèå îá îêîí÷àíèè èãðû
+	WM_GridChange = RegisterWindowMessage(_T("GridChange")); // сообщение об изменении игрового поля
+	WM_GameOver = RegisterWindowMessage(_T("GameOver")); // сообщение об окончании игры
 
 
-	// Öèêë îáðàáîòêè ñîîáùåíèé
+	// Цикл обработки сообщений
 	while ((bMessageOk = GetMessage(&message, NULL, 0, 0)) != 0)
 	{
 		if (bMessageOk == -1)
